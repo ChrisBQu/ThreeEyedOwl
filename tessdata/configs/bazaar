@@ -1,0 +1,5 @@
+load_system_dawg     F
+load_freq_dawg       F
+user_words_suffix    user-words
+language_model_penalty_non_freq_dict_word 1
+language_model_penalty_non_dict_word 1
