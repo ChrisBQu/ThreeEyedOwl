@@ -31,6 +31,8 @@ void fillHoles(cv::Mat& src, cv::Mat dst) {
 	dst = (src + tmp);
 }
 
+
+
 // Apply binary thresholding to the image, and apply processing to it to segment the cards from the surface they are on
 void color_to_thresh(cv::Mat & src, cv::Mat & dst) {
 	cv::Mat img_bw;
@@ -38,12 +40,16 @@ void color_to_thresh(cv::Mat & src, cv::Mat & dst) {
 	cv::GaussianBlur(img_bw, img_bw, cv::Size(3, 3), 7);
 	cv::Mat canny = img_bw.clone();
 	cv::Canny(img_bw, canny, 50, 255);
+	cv::imshow("canny", canny);
 	cv::Mat elem = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(7, 7));
 	cv::dilate(canny, canny, elem, cv::Point(-1, -1), 2);
 	cv::erode(canny, canny, elem, cv::Point(-1, -1), 2);
 	dst = canny.clone();
 	cv::Mat tmp = dst.clone();
 	fillHoles(tmp, dst);
+	fillHoles(tmp, dst);
+
+	cv::imshow("thresh", dst);
 
 	// Used for screenshotting purposes. Not necessary for the program to work
 	cv::imwrite(CONFIG_SAVE_DIRECTORY + "thresh " + std::to_string(saved_file_count++) + ".png", dst);
@@ -67,6 +73,8 @@ std::vector<cv::RotatedRect> get_candidate_rects(std::vector<std::vector<cv::Poi
 	}
 	return candidate_rects;
 }
+
+
 
 // Apply perspective transformation to each of the rotated rectangles in the image to get those portions
 // of the image as upright rectangles. We consider four variants of it: one for each 90-degree rotation
@@ -125,6 +133,43 @@ void seekMatch(std::vector<cv::Mat> warped_mats, std::vector<cv::RotatedRect> re
 
 }
 
+// Removes smaller contours inside larger ones, and utilizes the convex hull of contours, to avoid contours bleeding into background
+// Also remove especially large and especially small contours
+void cleanContours(const std::vector<std::vector<cv::Point>>& inputContours, std::vector<std::vector<cv::Point>>& outputContours, double minArea) {
+	std::vector<bool> keepContour(inputContours.size(), true);
+
+	// Step 1: Remove contours inside of another contour
+	for (size_t i = 0; i < inputContours.size(); ++i) {
+		// Check contour area
+		double area = cv::contourArea(inputContours[i]);
+		std::cout << "Area: " << area << std::endl;
+
+		if (area < minArea) {
+			keepContour[i] = false;
+			continue;
+		}
+
+		for (size_t j = 0; j < inputContours.size(); ++j) {
+			if (i != j && keepContour[j]) {
+				// Check if contour j is inside contour i
+				if (cv::pointPolygonTest(inputContours[i], inputContours[j][0], false) >= 0) {
+					keepContour[j] = false;
+				}
+			}
+		}
+	}
+
+	// Step 2: Generate the convex hull of the remaining contours
+	for (size_t i = 0; i < inputContours.size(); ++i) {
+		if (keepContour[i]) {
+			std::vector<cv::Point> hull;
+			cv::convexHull(inputContours[i], hull);
+			outputContours.push_back(hull);
+		}
+	}
+}
+
+
 // Test driver
 int main()
 {
@@ -144,16 +189,22 @@ int main()
 
 		cv::Mat contour_mat = img.clone();
 		cv::findContours(thresh, contours, hierarchy, cv::RetrievalModes::RETR_TREE, cv::ContourApproximationModes::CHAIN_APPROX_TC89_KCOS);
-		cv::drawContours(contour_mat, contours, -1, cv::Scalar(rand() % 255, rand() % 255, rand() % 255), 3);
+
+		std::vector<std::vector<cv::Point>> cleaned_contours;
+		cleanContours(contours, cleaned_contours, 40000);
+
+		cv::drawContours(contour_mat, cleaned_contours, -1, cv::Scalar(rand() % 255, rand() % 255, rand() % 255), 3);
+
+
+		cv::imshow("contours", contour_mat);
 
 		// Save the contour images
 		//cv::imwrite(CONFIG_SAVE_DIRECTORY + "contours " + std::to_string(saved_file_count++) + ".png", contour_mat);
 
-		std::vector<cv::RotatedRect> candidate_rects = get_candidate_rects(contours, hierarchy);
+		std::vector<cv::RotatedRect> candidate_rects = get_candidate_rects(cleaned_contours, hierarchy);
 		std::vector<cv::Mat> warped_mats = get_warped_candidate_mats(img, candidate_rects);
 
 		seekMatch(warped_mats, candidate_rects, img);
-
 		cv::imshow("Output", img);
 
 		// Save the output
